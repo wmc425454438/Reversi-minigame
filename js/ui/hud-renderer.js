@@ -52,10 +52,13 @@ export function drawLoading(renderer, text, progress) {
 
 export function drawEnemyBanner(renderer, state) {
   const ctx = renderer.ctx;
-  const faction = state.currentPlayerFaction || '?';
+  const p1Faction = state.currentPlayerFaction || '?';
+  const p2Faction = state.player2Faction || '?';
   const totems = { '魏': '🐯', '蜀': '🦌', '吴': '🐉' };
+  const factionColorMap = { '魏': COLORS.factionWei, '蜀': COLORS.factionShu, '吴': COLORS.factionWu };
   const enemyHand = state.player2Hand;
   const enemyHP = state.player2._hp;
+  const eColor = factionColorMap[p2Faction] || COLORS.player2;
 
   const bx = renderer.cardSideMargin;
   const by = renderer.enemyBannerY;
@@ -64,15 +67,15 @@ export function drawEnemyBanner(renderer, state) {
 
   ctx.fillStyle = 'rgba(0,0,0,0.5)';
   renderer.roundRect(bx, by, bw, bh, bh / 2, true, false);
-  ctx.strokeStyle = COLORS.player2;
+  ctx.strokeStyle = eColor;
   ctx.lineWidth = 1;
   renderer.roundRect(bx, by, bw, bh, bh / 2, false, true);
 
-  ctx.fillStyle = COLORS.player2;
+  ctx.fillStyle = eColor;
   ctx.font = 'bold 11px sans-serif';
   ctx.textAlign = 'left';
   ctx.textBaseline = 'middle';
-  ctx.fillText('敌方: ' + faction + ' ' + (totems[faction] || '') + '  兵力 ' + enemyHP, bx + 8, by + bh / 2);
+  ctx.fillText('敌方: ' + p2Faction + ' ' + (totems[p2Faction] || '') + '  兵力 ' + enemyHP, bx + 8, by + bh / 2);
 
   const eCount = enemyHand.getCardCount();
   const stackX = bx + bw - 8;
@@ -94,7 +97,9 @@ export function drawTurnIndicator(renderer, state) {
   const ctx = renderer.ctx;
   const cx = renderer.width / 2;
   const isP1Turn = state.lastMove === 1;
-  const turnColor = isP1Turn ? COLORS.player1 : COLORS.player2;
+  const turnFaction = isP1Turn ? state.currentPlayerFaction : state.player2Faction;
+  const factionColorMap = { '魏': COLORS.factionWei, '蜀': COLORS.factionShu, '吴': COLORS.factionWu };
+  const turnColor = factionColorMap[turnFaction] || (isP1Turn ? COLORS.player1 : COLORS.player2);
   const turnLabel = isP1Turn ? '⚔ 你的回合' : '敌方回合';
 
   const bw = 160, bh = 18;

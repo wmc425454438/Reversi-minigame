@@ -136,4 +136,20 @@ export function drawMenu(renderer, selectedFaction, aiDifficulty) {
     ctx.textAlign = 'center';
     ctx.fillText('请先选择一个势力', cx, renderer.menuBtnStartY + 3 * (renderer.menuBtnH + renderer.menuBtnGap) - 6);
   }
+
+  // 剧情模式按钮
+  const storyY = renderer.menuBtnStartY + 3 * (renderer.menuBtnH + renderer.menuBtnGap) + 10;
+  const storyBtnW = 160, storyBtnH = 32;
+  const sbx = cx - storyBtnW / 2;
+  ctx.fillStyle = COLORS.cardBg;
+  renderer.roundRect(sbx, storyY, storyBtnW, storyBtnH, storyBtnH / 2, true, false);
+  ctx.strokeStyle = rgba(COLORS.boardFrameGold, 0.4);
+  ctx.lineWidth = 1;
+  renderer.roundRect(sbx, storyY, storyBtnW, storyBtnH, storyBtnH / 2, false, true);
+  ctx.fillStyle = COLORS.textGold;
+  ctx.font = 'bold 13px sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText('📜 剧情模式', cx, storyY + storyBtnH / 2);
+  renderer._storyButton = { x: sbx, y: storyY, w: storyBtnW, h: storyBtnH };
 }

@@ -3,6 +3,7 @@ import { PlayerDeck, PlayerHand } from './models/card.js';
 import { createInitialBoard, calculateMoveableArea, reversiChess, hasAnyMoveable } from './game/logic.js';
 import { Renderer } from './ui/renderer.js';
 import { AIPlayer, AI_DIFFICULTY } from './ai/ai-player.js';
+import { getChapterList, getChapter, completeChapter } from './models/chapters.js';
 
 const DESIGN_WIDTH = 375;
 const DESIGN_HEIGHT = 667;
@@ -29,14 +30,9 @@ export default class Main {
 
     this.renderer = new Renderer(DESIGN_WIDTH, DESIGN_HEIGHT, this.ctx, () => this.dragState, () => this.loadProgress);
 
-    this.scene = 'loading';  // loading → tutorial → menu → game
+    this.scene = 'loading';  // loading → modeSelect → ...
     this.selectedFaction = null;
     this.selectedCard = null;
-
-    // 新手引导状态
-    this.tutorialPage = 0;
-    this.tutorialTouchStartX = 0;
-    this.tutorialTouchStartY = 0;
 
     // 闪电预览
     this.previewChains = null;
@@ -58,6 +54,12 @@ export default class Main {
 
     // 加载进度
     this.loadProgress = 0;
+
+    // 剧情模式状态
+    this.isChapterMode = false;
+    this.currentChapterId = null;
+    this.chapterRules = null;
+    this.storyTextIndex = 0;
 
     // 性能监控
     this.setupPerformanceMonitoring();
@@ -106,8 +108,7 @@ export default class Main {
       await new Promise(resolve => setTimeout(resolve, step.duration));
     }
 
-    this.scene = 'tutorial';
-    this.tutorialPage = 0;
+    this.scene = 'modeSelect';
   }
 
   initGameState() {
@@ -118,6 +119,7 @@ export default class Main {
       player2: new Player('玩家2', 2),
       gameOver: false,
       currentPlayerFaction: null,
+      player2Faction: null,
       player1Deck: null,
       player2Deck: null,
       player1Hand: null,
@@ -131,13 +133,67 @@ export default class Main {
   startGame(faction, difficulty) {
     this.initGameState();
 
+    // AI从剩余势力中随机选一个
+    const allFactions = ['魏', '蜀', '吴'];
+    const remaining = allFactions.filter(f => f !== faction);
+    const p2Faction = remaining[Math.floor(Math.random() * remaining.length)];
+
     const board = createInitialBoard();
     const p1Deck = new PlayerDeck(faction);
-    const p2Deck = new PlayerDeck(faction);
+    const p2Deck = new PlayerDeck(p2Faction);
     const p1Hand = new PlayerHand(5);
     const p2Hand = new PlayerHand(5);
 
     for (let i = 0; i < 5; i++) {
+      const c1 = p1Deck.drawCard();
+      if (c1) p1Hand.addCard(c1);
+      const c2 = p2Deck.drawCard();
+      if (c2) p2Hand.addCard(c2);
+    }
+
+    this.gameState = {
+      ...this.gameState,
+      tableArr: calculateMoveableArea(board, 1),
+      currentPlayerFaction: faction,
+      player2Faction: p2Faction,
+      player1Deck: p1Deck,
+      player2Deck: p2Deck,
+      player1Hand: p1Hand,
+      player2Hand: p2Hand,
+    };
+
+    // 初始化AI
+    this.aiDifficulty = difficulty || null;
+    if (this.aiDifficulty && this.aiDifficulty !== AI_DIFFICULTY.PVP) {
+      this.aiPlayer = new AIPlayer(this.aiDifficulty);
+    } else {
+      this.aiPlayer = null;
+    }
+
+    this.scene = 'game';
+  }
+
+  startChapterGame(chapterId) {
+    const chapter = getChapter(chapterId);
+    if (!chapter) return;
+
+    this.isChapterMode = true;
+    this.currentChapterId = chapterId;
+    this.chapterRules = chapter.specialRules || null;
+    this.storyTextIndex = 0;
+    this.selectedCard = null;
+
+    this.initGameState();
+
+    const faction = chapter.faction || '蜀';
+    const board = createInitialBoard();
+    const handLimit = this.chapterRules.handLimit || 5;
+    const p1Deck = new PlayerDeck(faction);
+    const p2Deck = new PlayerDeck(faction);
+    const p1Hand = new PlayerHand(handLimit);
+    const p2Hand = new PlayerHand(handLimit);
+
+    for (let i = 0; i < handLimit; i++) {
       const c1 = p1Deck.drawCard();
       if (c1) p1Hand.addCard(c1);
       const c2 = p2Deck.drawCard();
@@ -154,15 +210,9 @@ export default class Main {
       player2Hand: p2Hand,
     };
 
-    // 初始化AI
-    this.aiDifficulty = difficulty || null;
-    if (this.aiDifficulty && this.aiDifficulty !== AI_DIFFICULTY.PVP) {
-      this.aiPlayer = new AIPlayer(this.aiDifficulty);
-    } else {
-      this.aiPlayer = null;
-    }
-
-    this.scene = 'game';
+    this.aiPlayer = new AIPlayer(AI_DIFFICULTY.MEDIUM);
+    this.aiDifficulty = AI_DIFFICULTY.MEDIUM;
+    this.scene = 'storyGame';
   }
 
   refillHand(playerType) {
@@ -217,15 +267,6 @@ export default class Main {
     if (gs.gameOver) return;
     if (gs.tableArr[row][col].type !== 3) return;
     if (!gs.selectedCard) return;
-
-    // 同名武将唯一性检查：场上已有同名棋子则禁止落子
-    const charName = gs.selectedCard.character._name;
-    for (let i = 0; i < 6; i++) {
-      for (let j = 0; j < 6; j++) {
-        const cell = gs.tableArr[i][j];
-        if (cell.character && cell.character._name === charName) return;
-      }
-    }
 
     const currentPlayerType = gs.lastMove;
 
@@ -342,6 +383,8 @@ export default class Main {
         type: 'flip',
         x: fcx,
         y: fcy,
+        _row: fp.row,
+        _col: fp.col,
         fromType: newBoard[fp.row][fp.col].fromType || (currentPlayerType === 1 ? 2 : 1),
         toType: currentPlayerType,
         startTime: now + flipDelay,
@@ -352,7 +395,8 @@ export default class Main {
       flipIndex++;
     }
 
-    const totalDamage = gs.selectedCard.character._attack + comboDamage;
+    const totalDamage = gs.selectedCard.character._attack + comboDamage
+      + (this.chapterRules && this.chapterRules.flipBonus ? flippedPositions.length * this.chapterRules.flipBonus : 0);
     const opponent = currentPlayerType === 1 ? gs.player2 : gs.player1;
     opponent.takeDamage(totalDamage);
 
@@ -438,33 +482,30 @@ export default class Main {
     const touch = e.touches[0];
     const { x, y } = this.toDesignCoords(touch);
 
-    if (this.scene === 'tutorial') {
-      this.tutorialTouchStartX = x;
-      this.tutorialTouchStartY = y;
-
-      // 检测跳过/进入按钮
-      if (this.renderer.getTutorialSkipAt(x, y)) {
+    if (this.scene === 'modeSelect') {
+      if (this.renderer.getStoryModeBtnAt(x, y)) {
+        this.scene = 'chapterList';
+      } else if (this.renderer.getBattleModeBtnAt(x, y)) {
         this.scene = 'menu';
-        this.tutorialPage = 0;
-        return;
-      }
-      if (this.renderer.getTutorialEnterAt(x, y)) {
-        this.scene = 'menu';
-        this.tutorialPage = 0;
-        return;
       }
       return;
     }
 
     if (this.scene === 'menu') {
       this.handleMenuTouch(x, y);
-    } else if (this.scene === 'game') {
+    } else if (this.scene === 'game' || this.scene === 'storyGame') {
       this.handleGameTouchStart(x, y);
+    } else if (this.scene === 'chapterList') {
+      this.handleChapterListTouch(x, y);
+    } else if (this.scene === 'storyDetail') {
+      this.handleStoryDetailTouch(x, y);
+    } else if (this.scene === 'branchSelect') {
+      this.handleBranchTouch(x, y);
     }
   }
 
   handleTouchMove(e) {
-    if (this.scene === 'game' && this.dragState.isDragging) {
+    if ((this.scene === 'game' || this.scene === 'storyGame') && this.dragState.isDragging) {
       const touch = e.touches[0];
       const { x, y } = this.toDesignCoords(touch);
       this.dragState.currentX = x;
@@ -489,24 +530,7 @@ export default class Main {
   }
 
   handleTouchEnd(e) {
-    if (this.scene === 'tutorial') {
-      const touch = e.changedTouches[0];
-      const { x, y } = this.toDesignCoords(touch);
-      const dx = x - this.tutorialTouchStartX;
-      const dy = y - this.tutorialTouchStartY;
-
-      // 横向滑动超过30px触发翻页
-      if (Math.abs(dx) > Math.abs(dy) && Math.abs(dx) > 30) {
-        if (dx < 0 && this.tutorialPage < 2) {
-          this.tutorialPage++;
-        } else if (dx > 0 && this.tutorialPage > 0) {
-          this.tutorialPage--;
-        }
-      }
-      return;
-    }
-
-    if (this.scene === 'game') {
+    if (this.scene === 'game' || this.scene === 'storyGame') {
       const touch = e.changedTouches[0];
       const { x, y } = this.toDesignCoords(touch);
       this.handleGameTouchEnd(x, y);
@@ -514,6 +538,12 @@ export default class Main {
   }
 
   handleMenuTouch(x, y) {
+    // 剧情模式按钮
+    if (this.renderer.getStoryButtonAt(x, y)) {
+      this.scene = 'chapterList';
+      return;
+    }
+
     const faction = this.renderer.getMenuButtonAt(x, y);
     if (faction) {
       this.selectedFaction = faction;
@@ -539,8 +569,18 @@ export default class Main {
 
     if (gs.gameOver) {
       if (this.renderer.getRestartButtonAt(x, y)) {
-        this.scene = 'menu';
-        this.selectedFaction = null;
+        if (this.isChapterMode) {
+          const player1Won = !gs.player1.isDead();
+          if (player1Won) {
+            this.scene = 'branchSelect';
+          } else {
+            this.scene = 'chapterList';
+          }
+          this.isChapterMode = false;
+        } else {
+          this.scene = 'menu';
+          this.selectedFaction = null;
+        }
         this.initGameState();
       }
       return;
@@ -564,21 +604,8 @@ export default class Main {
       }
     }
 
-    // 检查是否已在场上
-    const isDuplicateOnBoard = (c) => {
-      if (!c || !c.character) return false;
-      const n = c.character._name;
-      for (let i = 0; i < 6; i++) {
-        for (let j = 0; j < 6; j++) {
-          const cl = gs.tableArr[i] && gs.tableArr[i][j];
-          if (cl && cl.character && cl.character._name === n) return true;
-        }
-      }
-      return false;
-    };
-
     const card = this.renderer.getCardAt(x, y);
-    if (card && gs.lastMove === 1 && !isDuplicateOnBoard(card)) {
+    if (card && gs.lastMove === 1) {
       this.dragState.isDragging = true;
       this.dragState.card = card;
       this.dragState.startX = x;
@@ -609,6 +636,41 @@ export default class Main {
     }
   }
 
+  handleChapterListTouch(x, y) {
+    if (this.renderer.getChapterBackAt(x, y)) {
+      this.scene = 'menu';
+      return;
+    }
+    const btn = this.renderer.getChapterButtonAt(x, y);
+    if (btn && btn.unlocked) {
+      this.currentChapterId = btn.chapterId;
+      this.storyTextIndex = 0;
+      this.scene = 'storyDetail';
+    }
+  }
+
+  handleStoryDetailTouch(x, y) {
+    if (this.renderer.getStoryBackAt(x, y)) {
+      this.scene = 'chapterList';
+      return;
+    }
+    if (this.renderer.getStoryNextAt(x, y)) {
+      this.storyTextIndex++;
+      return;
+    }
+    if (this.renderer.getStoryStartAt(x, y)) {
+      this.startChapterGame(this.currentChapterId);
+    }
+  }
+
+  handleBranchTouch(x, y) {
+    const btn = this.renderer.getBranchAt(x, y);
+    if (btn) {
+      completeChapter(this.currentChapterId, btn.nextChapter);
+      this.scene = 'chapterList';
+    }
+  }
+
   loop() {
     this.render();
     this.updateAnimations();
@@ -630,16 +692,29 @@ export default class Main {
   render() {
     if (this.scene === 'loading') {
       this.renderer.drawLoading(this.loadingText, this.loadProgress);
-    } else if (this.scene === 'tutorial') {
-      this.renderer.drawTutorial(this.tutorialPage);
+    } else if (this.scene === 'modeSelect') {
+      this.renderer.drawModeSelect();
     } else if (this.scene === 'menu') {
       this.renderer.drawMenu(this.selectedFaction, this.aiDifficulty);
-    } else if (this.scene === 'game') {
+    } else if (this.scene === 'game' || this.scene === 'storyGame') {
       // AI回合检测
       this.processAITurn();
       this.gameState.previewChains = this.previewChains;
       this.gameState.isAIThinking = this.isAIThinking;
       this.renderer.drawGame(this.gameState);
+      if (this.isChapterMode && this.chapterRules) {
+        this.renderer.drawChapterRuleTip(this.chapterRules);
+      }
+    } else if (this.scene === 'chapterList') {
+      this.renderer.drawChapterList(getChapterList());
+    } else if (this.scene === 'storyDetail') {
+      const chapter = getChapter(this.currentChapterId);
+      this.renderer.drawStoryDetail(chapter, this.storyTextIndex);
+    } else if (this.scene === 'branchSelect') {
+      const chapter = getChapter(this.currentChapterId);
+      this.renderer.clear();
+      this.renderer.drawBackground();
+      this.renderer.drawBranchSelect(chapter);
     }
   }
 

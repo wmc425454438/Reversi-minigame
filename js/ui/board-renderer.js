@@ -1,17 +1,40 @@
 import { BOARD_SIZE, COLORS } from '../game/constants.js';
 
+// 棋盘透视倾斜参数
+const TILT_ANGLE = 0;
+const TILT_COS = 1;
+
+// 阵营贴图缓存
+const pieceImages = {};
+export function getFactionImage(faction) {
+  if (!pieceImages[faction]) {
+    const nameMap = { '魏': 'wei', '蜀': 'shu', '吴': 'wu' };
+    const img = wx.createImage();
+    img.src = 'assets/img/' + (nameMap[faction] || 'shu') + '.png';
+    pieceImages[faction] = img;
+  }
+  return pieceImages[faction];
+}
+
 // 预计算静态数据，避免每帧分配
 const DOT_POSITIONS = [[2,2], [2,3], [3,2], [3,3]];
 
-// 玩家色系映射
-function playerColors(type) {
-  if (type === 1) return { main: COLORS.player1, light: COLORS.player1Light, dark: COLORS.player1Dark, rgb: '255,180,150' };
-  return { main: COLORS.player2, light: COLORS.player2Light, dark: COLORS.player2Dark, rgb: '150,220,210' };
+// 玩家色系映射 — 按势力动态取色
+function playerColors(type, state) {
+  const p1Faction = state ? state.currentPlayerFaction : '蜀';
+  const p2Faction = state ? state.player2Faction : '吴';
+  const faction = type === 1 ? p1Faction : p2Faction;
+  const map = {
+    '魏': { main: COLORS.factionWei, light: '#b494f8', dark: '#5a30a0', rgb: '139,92,246' },
+    '蜀': { main: COLORS.factionShu, light: COLORS.player1Light, dark: COLORS.player1Dark, rgb: '255,180,150' },
+    '吴': { main: COLORS.factionWu, light: COLORS.player2Light, dark: COLORS.player2Dark, rgb: '150,220,210' },
+  };
+  return map[faction] || playerColors(type, null);
 }
 
 // 统一棋子渐变
-function pieceGradient(ctx, cx, cy, r, type) {
-  const c = playerColors(type);
+function pieceGradient(ctx, cx, cy, r, type, state) {
+  const c = playerColors(type, state);
   const grad = ctx.createRadialGradient(cx - r*0.3, cy - r*0.3, r*0.05, cx + r*0.15, cy + r*0.15, r);
   grad.addColorStop(0, c.light);
   grad.addColorStop(0.65, c.main);
@@ -24,12 +47,24 @@ function rgba(hex, alpha) {
   return `rgba(${(n>>16)&255},${(n>>8)&255},${n&255},${alpha})`;
 }
 
-export function drawBoard(renderer, board, lastMove, hasSelectedCard, previewFlipped) {
+export function drawBoard(renderer, board, lastMove, hasSelectedCard, previewFlipped, gameState) {
   const ctx = renderer.ctx;
   const { boardX, boardY, cellSize, boardSize } = renderer;
 
   // 构建预览翻转位置集合
   const previewSet = previewFlipped ? new Set(previewFlipped.map(p => p.row + ',' + p.col)) : null;
+
+  // 构建翻转动画中的格子集合，这些格子由动画层绘制，棋盘不画
+  const flippingCells = new Set();
+  const animations = renderer._pendingFlipAnimations;
+  if (animations) {
+    const now = Date.now();
+    for (const anim of animations) {
+      if (anim.type === 'flip') {
+        flippingCells.add(anim._row + ',' + anim._col);
+      }
+    }
+  }
   const fw = 8;
 
   // 外框投影
@@ -86,6 +121,16 @@ export function drawBoard(renderer, board, lastMove, hasSelectedCard, previewFli
     ctx.fill();
   }
 
+  // 透视倾斜变换（绕棋盘中心X轴提升15°）
+  const boardCX = boardX + boardSize / 2;
+  const boardCY = boardY + boardSize / 2;
+  ctx.save();
+  ctx.translate(boardCX, boardCY);
+  ctx.scale(1, TILT_COS);
+  ctx.translate(-boardCX, -boardCY);
+  // 记录倾斜参数供动画层使用
+  renderer._boardTilt = { cx: boardCX, cy: boardCY, cos: TILT_COS };
+
   // 格子
   for (let i = 0; i < BOARD_SIZE; i++) {
     for (let j = 0; j < BOARD_SIZE; j++) {
@@ -118,80 +163,78 @@ export function drawBoard(renderer, board, lastMove, hasSelectedCard, previewFli
       }
 
       if (cell.type === 1 || cell.type === 2) {
-        drawPiece(ctx, cx, cy, pieceR, cell.type, cell.character);
+        if (flippingCells.has(i + ',' + j)) continue;
+        drawPiece(ctx, cx, cy, pieceR, cell.type, cell.character, gameState);
       } else if (cell.type === 3) {
         drawMoveable(ctx, renderer.frameTime, cx, cy, pieceR, cell, hasSelectedCard);
       }
     }
   }
+  ctx.restore(); // 恢复透视倾斜变换
 }
 
-export function drawPiece(ctx, cx, cy, r, type, character) {
-  const faction = character && character._faction;
+export function drawPiece(ctx, cx, cy, r, type, character, gameState) {
+  const faction = (character && character._faction)
+    || (type === 1 ? (gameState && gameState.currentPlayerFaction) : (gameState && gameState.player2Faction))
+    || '蜀';
+  const c = playerColors(type, gameState);
+  const thickH = r * 0.22; // 棋子厚度
 
+  // 投影阴影
+  ctx.save();
+  ctx.shadowColor = 'rgba(0, 0, 0, 0.45)';
+  ctx.shadowBlur = 8;
+  ctx.shadowOffsetX = 2;
+  ctx.shadowOffsetY = 5;
+  ctx.beginPath();
+  ctx.ellipse(cx, cy + thickH + 2, r * 1.02, r * 0.35, 0, 0, Math.PI * 2);
+  ctx.fillStyle = 'rgba(0,0,0,0.2)';
+  ctx.fill();
+  ctx.restore();
+
+  // 厚度侧边层（从底部到顶部的渐变色圆柱侧面）
+  ctx.beginPath();
+  ctx.ellipse(cx, cy + thickH, r, r * 0.3, 0, 0, Math.PI);
+  ctx.lineTo(cx + r, cy);
+  ctx.arc(cx, cy, r, 0, Math.PI, true);
+  ctx.closePath();
+  const sideGrad = ctx.createLinearGradient(cx - r, cy, cx + r, cy);
+  sideGrad.addColorStop(0, c.dark);
+  sideGrad.addColorStop(0.3, c.main);
+  sideGrad.addColorStop(0.7, c.main);
+  sideGrad.addColorStop(1, c.dark);
+  ctx.fillStyle = sideGrad;
+  ctx.fill();
+
+  // 底部椭圆暗边
+  ctx.beginPath();
+  ctx.ellipse(cx, cy + thickH, r, r * 0.3, 0, 0, Math.PI * 2);
+  ctx.strokeStyle = 'rgba(0,0,0,0.3)';
+  ctx.lineWidth = 0.8;
+  ctx.stroke();
+
+  // 顶面
   ctx.save();
   ctx.beginPath();
   ctx.arc(cx, cy, r, 0, Math.PI * 2);
-  ctx.clip(); // 裁剪到棋子圆内
+  ctx.clip();
 
-  // 阴影
-  ctx.shadowColor = 'rgba(0, 0, 0, 0.5)';
-  ctx.shadowBlur = 4;
-  ctx.shadowOffsetY = 2;
-
+  // 底色渐变
   ctx.beginPath();
   ctx.arc(cx, cy, r, 0, Math.PI * 2);
-  ctx.fillStyle = pieceGradient(ctx, cx, cy, r, type);
+  ctx.fillStyle = pieceGradient(ctx, cx, cy, r, type, gameState);
   ctx.fill();
-  ctx.shadowColor = 'transparent';
 
-  // 阵营纹理
-  if (faction) {
-    ctx.lineWidth = 0.4;
-    if (faction === '魏') {
-      // 虎纹：斜线条纹
-      ctx.strokeStyle = 'rgba(255,255,255,0.06)';
-      for (let d = -r * 2; d < r * 2; d += 4) {
-        ctx.beginPath();
-        ctx.moveTo(cx + d - r, cy - r);
-        ctx.lineTo(cx + d + r, cy + r);
-        ctx.stroke();
-      }
-    } else if (faction === '蜀') {
-      // 龙鳞：小圆点
-      ctx.fillStyle = 'rgba(255,255,255,0.05)';
-      for (let dr = r * 0.3; dr < r; dr += 5) {
-        for (let a = 0; a < Math.PI * 2; a += Math.PI / 4) {
-          ctx.beginPath();
-          ctx.arc(cx + Math.cos(a) * dr * 0.5, cy + Math.sin(a) * dr * 0.5, 1, 0, Math.PI * 2);
-          ctx.fill();
-        }
-      }
-    } else if (faction === '吴') {
-      // 水波纹
-      ctx.strokeStyle = 'rgba(255,255,255,0.05)';
-      for (let wr = r * 0.3; wr < r; wr += 5) {
-        ctx.beginPath();
-        ctx.arc(cx, cy, wr, 0, Math.PI * 2);
-        ctx.stroke();
-      }
-    }
+  // 阵营贴图
+  // IMAGE_SCALE 控制贴图缩放：1.0=刚好填满圆, >1.0=放大裁掉透明边, <1.0=缩小留边
+  const IMAGE_SCALE = 1.5;
+  const img = getFactionImage(faction);
+  if (img.complete && img.width > 0) {
+    const isr = r * IMAGE_SCALE;
+    ctx.drawImage(img, cx - isr, cy - isr, isr * 2, isr * 2);
   }
 
   ctx.restore();
-
-  // 高光
-  ctx.beginPath();
-  ctx.arc(cx - r * 0.25, cy - r * 0.25, r * 0.25, 0, Math.PI * 2);
-  ctx.fillStyle = 'rgba(255,255,255,0.3)';
-  ctx.fill();
-
-  // 边缘
-  ctx.beginPath();
-  ctx.arc(cx, cy, r, 0, Math.PI * 2);
-  ctx.strokeStyle = 'rgba(255, 255, 255, 0.12)';
-  ctx.lineWidth = 1;
-  ctx.stroke();
 
   // 武将名带描边
   if (character && character._name) {

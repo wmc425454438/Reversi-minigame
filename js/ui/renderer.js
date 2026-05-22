@@ -5,6 +5,7 @@ import { drawAnimations, drawPreviewLightning } from './animation-renderer.js';
 import { drawMenu } from './menu-renderer.js';
 import { drawTutorial } from './tutorial-renderer.js';
 import { drawLoading, drawEnemyBanner, drawTurnIndicator, drawHPBar, drawGameOver } from './hud-renderer.js';
+import { drawModeSelect, drawChapterList, drawStoryDetail, drawBranchSelect, drawChapterRuleTip } from './story-renderer.js';
 
 function rgba(hex, alpha) {
   const n = parseInt(hex.replace('#', ''), 16);
@@ -176,11 +177,13 @@ export class Renderer {
     this.clear();
     this.drawBackground();
     this.frameTime = Date.now();
+    this._gameState = state;
 
     drawEnemyBanner(this, state);
     drawTurnIndicator(this, state);
     const previewFlipped = state.previewChains ? state.previewChains.flippedPositions : null;
-    drawBoard(this, state.tableArr, state.lastMove, !!state.selectedCard, previewFlipped);
+    this._pendingFlipAnimations = state.animations || [];
+    drawBoard(this, state.tableArr, state.lastMove, !!state.selectedCard, previewFlipped, state);
     drawCards(this, state);
     drawHPBar(this, state.player1, 1, state.currentPlayerFaction);
 
@@ -216,6 +219,60 @@ export class Renderer {
   }
 
   getRestartButtonAt(x, y) { return this._hitRect(x, y, this._restartButton); }
+
+  // ==================== Story Chapter Scenes ====================
+
+  drawModeSelect() {
+    this.clear();
+    this.drawBackground();
+    drawModeSelect(this);
+  }
+
+  drawChapterList(chapters) {
+    this.clear();
+    this.drawBackground();
+    drawChapterList(this, chapters);
+  }
+
+  drawStoryDetail(chapter, textIndex) {
+    this.clear();
+    this.drawBackground();
+    drawStoryDetail(this, chapter, textIndex);
+  }
+
+  drawBranchSelect(chapter) {
+    drawBranchSelect(this, chapter);
+  }
+
+  drawChapterRuleTip(rules) {
+    drawChapterRuleTip(this, rules);
+  }
+
+  getChapterButtonAt(x, y) {
+    const btns = this._chapterButtons || [];
+    for (const b of btns) {
+      if (this._hitRectRaw(x, y, b)) return b;
+    }
+    return null;
+  }
+
+  getChapterBackAt(x, y) { return this._hitRect(x, y, this._chapterBackButton); }
+  getStoryNextAt(x, y) { return this._hitRect(x, y, this._storyNextButton); }
+  getStoryStartAt(x, y) { return this._hitRect(x, y, this._storyStartButton); }
+  getStoryBackAt(x, y) { return this._hitRect(x, y, this._storyBackButton); }
+
+  getBranchAt(x, y) {
+    const btns = this._branchButtons || [];
+    for (const b of btns) {
+      if (this._hitRectRaw(x, y, b)) return b;
+    }
+    return null;
+  }
+
+  getStoryButtonAt(x, y) { return this._hitRect(x, y, this._storyButton); }
+
+  getStoryModeBtnAt(x, y) { return this._hitRect(x, y, this._storyModeBtn); }
+  getBattleModeBtnAt(x, y) { return this._hitRect(x, y, this._battleModeBtn); }
 
   getCardAt(x, y) {
     const positions = this.cardPositions || [];

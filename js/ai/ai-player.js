@@ -28,23 +28,6 @@ export class AIPlayer {
     this.difficulty = difficulty || AI_DIFFICULTY.MEDIUM;
   }
 
-  // 过滤掉已存在于场上的同名武将卡
-  _getValidCards(hand, board) {
-    const cards = hand.getCards();
-    return cards.filter(card => {
-      const name = card.character && card.character._name;
-      if (!name) return true;
-      for (let i = 0; i < BOARD_SIZE; i++) {
-        for (let j = 0; j < BOARD_SIZE; j++) {
-          if (board[i][j].character && board[i][j].character._name === name) {
-            return false;
-          }
-        }
-      }
-      return true;
-    });
-  }
-
   // 找到所有合法落子位置
   _getLegalMoves(board, playerType) {
     const moves = [];
@@ -77,7 +60,7 @@ export class AIPlayer {
   _getRandomMove(board, playerType, hand) {
     const moves = this._getLegalMoves(board, playerType);
     if (moves.length === 0) return null;
-    const cards = this._getValidCards(hand, board);
+    const cards = hand.getCards();
     if (cards.length === 0) return null;
     const move = moves[Math.floor(Math.random() * moves.length)];
     const card = cards[Math.floor(Math.random() * cards.length)];
@@ -87,7 +70,7 @@ export class AIPlayer {
   // MEDIUM: 优先翻最多子
   _getMediumMove(board, playerType, hand) {
     const moves = this._getLegalMoves(board, playerType);
-    const cards = this._getValidCards(hand, board);
+    const cards = hand.getCards();
     if (moves.length === 0 || cards.length === 0) return null;
 
     let best = null, bestFlips = -1;
@@ -112,7 +95,7 @@ export class AIPlayer {
   // HARD: 完整贪心 (翻子*2 + 位置权重 + 连击加分 + 卡牌价值)
   _getHardMove(board, playerType, hand) {
     const moves = this._getLegalMoves(board, playerType);
-    const cards = this._getValidCards(hand, board);
+    const cards = hand.getCards();
     if (moves.length === 0 || cards.length === 0) return null;
 
     let best = null, bestScore = -Infinity;

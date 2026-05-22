@@ -1,4 +1,5 @@
 import { COLORS } from '../game/constants.js';
+import { getFactionImage } from './board-renderer.js';
 
 const FACTION_COLORS = {
   '魏': COLORS.factionWei,
@@ -95,23 +96,9 @@ export function drawCards(renderer, state) {
     if (state.selectedCard && state.selectedCard.id === cards[i].id) drawOrder.push(i);
   }
 
-  // 检查场上已存在的武将名
-  const boardChars = new Set();
-  const board = state.tableArr;
-  if (board) {
-    for (let r = 0; r < 6; r++) {
-      for (let c = 0; c < 6; c++) {
-        if (board[r] && board[r][c] && board[r][c].character && board[r][c].character._name) {
-          boardChars.add(board[r][c].character._name);
-        }
-      }
-    }
-  }
-
   for (const i of drawOrder) {
     const card = cards[i];
     const isSelected = state.selectedCard && state.selectedCard.id === card.id;
-    const isDuplicate = boardChars.has(card.character._name);
     const offset = i - centerIdx;
     const dimmed = hasSelection && !isSelected;
 
@@ -144,8 +131,7 @@ export function drawCards(renderer, state) {
       ctx.restore();
     }
 
-    if (isDuplicate) ctx.globalAlpha = 0.35;
-    else if (dimmed) ctx.globalAlpha = 0.5;
+    if (dimmed) ctx.globalAlpha = 0.5;
 
     // === 卡面三区布局 ===
     ctx.shadowColor = 'rgba(0,0,0,0.5)';
@@ -192,20 +178,9 @@ export function drawCards(renderer, state) {
     ctx.globalAlpha = 1;
 
     // 阵营边框
-    ctx.strokeStyle = isDuplicate ? '#555555' : (isSelected ? '#ffffff' : fColor);
+    ctx.strokeStyle = isSelected ? '#ffffff' : fColor;
     ctx.lineWidth = isSelected ? 2.5 : 1.5;
     renderer.roundRect(-cardWidth / 2, -cardHeight, cardWidth, cardHeight, 5, false, true);
-
-    // 已出战标记
-    if (isDuplicate) {
-      ctx.fillStyle = 'rgba(0,0,0,0.6)';
-      ctx.fillRect(-cardWidth / 2, -cardHeight, cardWidth, cardHeight);
-      ctx.fillStyle = '#ff4444';
-      ctx.font = 'bold ' + Math.max(9, Math.floor(cardWidth * 0.13)) + 'px sans-serif';
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      ctx.fillText('已出战', 0, -cardHeight * 0.15);
-    }
 
     // 底部：属性水平排列
     const statY = -5;
@@ -257,6 +232,7 @@ export function drawDraggedCard(renderer, dragState) {
     ctx.shadowColor = 'rgba(0, 0, 0, 0.6)';
     ctx.shadowBlur = 16;
     ctx.shadowOffsetY = 6;
+    // 底色渐变
     const pg = ctx.createRadialGradient(currentX - pr*0.3, currentY - pr*0.3, pr*0.05, currentX + pr*0.15, currentY + pr*0.15, pr);
     pg.addColorStop(0, COLORS.player1Light);
     pg.addColorStop(0.65, COLORS.player1);
@@ -265,6 +241,18 @@ export function drawDraggedCard(renderer, dragState) {
     ctx.arc(currentX, currentY, pr, 0, Math.PI * 2);
     ctx.fillStyle = pg;
     ctx.fill();
+    // 阵营贴图
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(currentX, currentY, pr, 0, Math.PI * 2);
+    ctx.clip();
+    const faction = card.character._faction || '蜀';
+    const img = getFactionImage(faction);
+    if (img.complete && img.width > 0) {
+      const isr = pr * 1.5;
+      ctx.drawImage(img, currentX - isr, currentY - isr, isr * 2, isr * 2);
+    }
+    ctx.restore();
     ctx.restore();
 
     ctx.beginPath();

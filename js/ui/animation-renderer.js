@@ -1,4 +1,5 @@
 import { COLORS } from '../game/constants.js';
+import { getFactionImage } from './board-renderer.js';
 
 // 动画类型常量
 export const ANIM_TYPE = { PLACE: 'place', FLIP: 'flip', LIGHTNING: 'lightning' };
@@ -8,13 +9,28 @@ function rgba(hex, alpha) {
   return `rgba(${(n>>16)&255},${(n>>8)&255},${n&255},${alpha})`;
 }
 
-function playerRGB(type) {
-  return type === 1 ? '255,180,150' : '150,220,210';
+// 势力色系 — 从 renderer._gameState 取势力
+function _getFaction(type, state) {
+  if (!state) return type === 1 ? '蜀' : '吴';
+  return type === 1 ? (state.currentPlayerFaction || '蜀') : (state.player2Faction || '吴');
 }
 
+function playerRGB(type) {
+  const faction = _currentFactions ? _getFaction(type, _currentFactions) : (type === 1 ? '蜀' : '吴');
+  const map = { '魏': '139,92,246', '蜀': '255,180,150', '吴': '150,220,210' };
+  return map[faction] || (type === 1 ? '255,180,150' : '150,220,210');
+}
+
+let _currentFactions = null;
+
 function playerColors(type) {
-  if (type === 1) return { main: COLORS.player1, light: COLORS.player1Light, dark: COLORS.player1Dark };
-  return { main: COLORS.player2, light: COLORS.player2Light, dark: COLORS.player2Dark };
+  const faction = _currentFactions ? _getFaction(type, _currentFactions) : (type === 1 ? '蜀' : '吴');
+  const map = {
+    '魏': { main: COLORS.factionWei, light: '#b494f8', dark: '#5a30a0' },
+    '蜀': { main: COLORS.factionShu, light: COLORS.player1Light, dark: COLORS.player1Dark },
+    '吴': { main: COLORS.factionWu, light: COLORS.player2Light, dark: COLORS.player2Dark },
+  };
+  return map[faction] || { main: type === 1 ? COLORS.player1 : COLORS.player2, light: type === 1 ? COLORS.player1Light : COLORS.player2Light, dark: type === 1 ? COLORS.player1Dark : COLORS.player2Dark };
 }
 
 // 共享粒子渲染
@@ -81,6 +97,7 @@ export function drawAnimations(renderer, animations) {
   const ctx = renderer.ctx;
   const now = Date.now();
   const cellSize = renderer.cellSize;
+  _currentFactions = renderer._gameState || null;
 
   for (const anim of animations) {
     if (anim.type === ANIM_TYPE.PLACE) {
@@ -118,97 +135,128 @@ export function drawAnimations(renderer, animations) {
       ctx.fillStyle = glowGrad;
       ctx.fill();
 
-      // 粒子
-      if (anim.particles) {
-        drawParticles(ctx, anim.particles, elapsed, anim.playerType, 20);
-      }
-
       ctx.restore();
     } else if (anim.type === ANIM_TYPE.FLIP) {
       const elapsed = now - anim.startTime;
-      if (elapsed < 0) continue;
-      const progress = Math.min(elapsed / anim.duration, 1);
       const cr = (anim.cellSize || cellSize) * 0.4;
       const isToP1 = anim.toType === 1;
       const toClrs = playerColors(isToP1 ? 1 : 2);
       const fromClrs = playerColors(anim.fromType);
 
-      // 三阶段: 蓄力下压 → X轴翻滚 → EaseOutBounce落地
-      let angle, liftHeight, squashY;
-      if (progress < 0.08) {
-        // 蓄力下压: Y轴-2px, scaleY=0.85
-        const t = progress / 0.08;
-        angle = 0;
-        liftHeight = -2 * t;
-        squashY = 1 - t * 0.15;
-      } else if (progress < 0.5) {
-        // 翻起 0→90°: 快速翻转
-        const t = (progress - 0.08) / 0.42;
-        angle = t * Math.PI / 2;
-        liftHeight = -2 * (1 - t) + Math.sin(t * Math.PI) * cr * 0.5;
-        squashY = 1 - t * 0.15 + t * t * 0.15; // 恢复
-      } else {
-        // 落地 90→180°: EaseOutBounce
-        let t = (progress - 0.5) / 0.5;
-        angle = Math.PI / 2 + t * Math.PI / 2;
-        // EaseOutBounce 公式
-        const n1 = 7.5625, d1 = 2.75;
-        let bounceT = t;
-        if (t < 1 / d1) {
-          bounceT = n1 * t * t;
-        } else if (t < 2 / d1) {
-          bounceT = n1 * (t -= 1.5 / d1) * t + 0.75;
-        } else if (t < 2.5 / d1) {
-          bounceT = n1 * (t -= 2.25 / d1) * t + 0.9375;
-        } else {
-          bounceT = n1 * (t -= 2.625 / d1) * t + 0.984375;
+      // 应用棋盘透视倾斜
+      const tilt = renderer._boardTilt;
+      if (tilt) { ctx.save(); ctx.translate(tilt.cx, tilt.cy); ctx.scale(1, tilt.cos); ctx.translate(-tilt.cx, -tilt.cy); }
+
+      // 动画尚未开始：画静态旧色圆遮住已变色的棋盘
+      if (elapsed < 0) {
+        ctx.save();
+        ctx.translate(anim.x, anim.y);
+        // 厚度侧边
+        const thickH = cr * 0.22;
+        ctx.beginPath();
+        ctx.ellipse(0, thickH, cr, cr * 0.3, 0, 0, Math.PI);
+        ctx.lineTo(cr, 0);
+        ctx.arc(0, 0, cr, 0, Math.PI, true);
+        ctx.closePath();
+        ctx.fillStyle = fromClrs.dark;
+        ctx.fill();
+        // 顶面
+        ctx.save();
+        ctx.beginPath();
+        ctx.arc(0, 0, cr, 0, Math.PI * 2);
+        ctx.clip();
+        const pg = ctx.createRadialGradient(-cr * 0.2, -cr * 0.2, cr * 0.05, cr * 0.1, cr * 0.1, cr);
+        pg.addColorStop(0, fromClrs.light);
+        pg.addColorStop(0.65, fromClrs.main);
+        pg.addColorStop(1, fromClrs.dark);
+        ctx.beginPath();
+        ctx.arc(0, 0, cr, 0, Math.PI * 2);
+        ctx.fillStyle = pg;
+        ctx.fill();
+        // 贴图
+        const fromFaction = _getFaction(anim.fromType, _currentFactions);
+        const fImg = getFactionImage(fromFaction);
+        if (fImg.complete && fImg.width > 0) {
+          ctx.drawImage(fImg, -cr * 1.5, -cr * 1.5, cr * 3, cr * 3);
         }
-        liftHeight = (1 - bounceT) * cr * 0.4;
-        squashY = 1;
+        ctx.restore();
+        ctx.restore();
+        if (tilt) ctx.restore();
+        continue;
       }
 
-      const scaleX = Math.abs(Math.cos(angle));
-      const showTop = Math.cos(angle) >= 0;
-      const color = showTop ? fromClrs.main : toClrs.main;
-      const clrs = showTop ? fromClrs : toClrs;
-      const edgeAlpha = (scaleX < 0.3 && progress > 0.08) ? Math.max(0, (0.3 - scaleX) / 0.3) : 0;
+      const progress = Math.min(elapsed / anim.duration, 1);
 
-      // 阴影随高度变化
-      const shadowAlpha = 0.35 - Math.max(0, liftHeight) / (cr * 2) * 0.3;
-      const shadowScale = 1 + Math.max(0, liftHeight) / cr * 0.12;
+      // scaleY: 1 → 0 → 1 (cos 缓动)
+      const scaleY = Math.abs(Math.cos(progress * Math.PI));
+      // 阶段2 (0.4~0.6) 切换颜色
+      const showNew = progress >= 0.5;
+      const clrs = showNew ? toClrs : fromClrs;
+      const color = clrs.main;
+      const thicknessH = cr * 0.25; // 棋子厚度
+
       ctx.save();
-      ctx.fillStyle = `rgba(0, 0, 0, ${Math.max(0.05, shadowAlpha)})`;
+      ctx.translate(anim.x, anim.y);
+
+      // --- 1. 底部阴影层 ---
+      ctx.save();
+      ctx.shadowBlur = 15;
+      ctx.shadowOffsetX = 3;
+      ctx.shadowOffsetY = 5;
+      ctx.shadowColor = 'rgba(0,0,0,0.5)';
       ctx.beginPath();
-      ctx.ellipse(anim.x, anim.y + cr * 0.5, cr * shadowScale, cr * 0.28 * shadowScale, 0, 0, Math.PI * 2);
+      ctx.ellipse(0, 0, cr, cr * scaleY, 0, 0, Math.PI * 2);
+      ctx.fillStyle = 'rgba(0,0,0,0.3)';
       ctx.fill();
       ctx.restore();
 
-      ctx.save();
-      ctx.translate(anim.x, anim.y - liftHeight);
-      ctx.scale(scaleX, squashY || 1);
+      // --- 2. 厚度侧边层 (椭圆环模拟侧面) ---
+      ctx.beginPath();
+      ctx.ellipse(0, thicknessH * (1 - scaleY), cr, cr * scaleY, 0, 0, Math.PI * 2);
+      ctx.fillStyle = '#5C3317'; // 深色木纹厚度
+      ctx.fill();
 
-      // === 侧面木纹（在90°附近可见） ===
-      if (edgeAlpha > 0.01) {
-        const sideW = cr * 0.25; // 侧面厚度
-        ctx.fillStyle = `rgba(90, 58, 26, ${edgeAlpha})`; // 木色
-        ctx.fillRect(-cr - sideW / 2, -cr, cr * 2 + sideW, cr * 2);
-        // 侧面上半高光线
-        ctx.fillStyle = `rgba(120, 80, 40, ${edgeAlpha * 0.5})`;
-        ctx.fillRect(-cr - sideW / 2, -cr, cr * 2 + sideW, cr);
+      // 厚度与顶面之间的过渡暗环
+      if (scaleY > 0.05) {
+        ctx.beginPath();
+        ctx.ellipse(0, thicknessH * (1 - scaleY) * 0.5, cr, cr * scaleY, 0, 0, Math.PI * 2);
+        ctx.fillStyle = '#3d2210';
+        ctx.fill();
       }
 
-      // === 棋子主体 ===
+      // --- 3. 顶面贴图层 ---
+      ctx.save();
+      ctx.shadowBlur = 10;
+      ctx.shadowOffsetY = 5 * scaleY;
+      ctx.shadowColor = 'rgba(0,0,0,0.7)';
+      ctx.scale(1, scaleY);
+
+      // 裁剪圆形
+      ctx.save();
+      ctx.beginPath();
+      ctx.arc(0, 0, cr, 0, Math.PI * 2);
+      ctx.clip();
+
+      // 底色渐变
       const pg = ctx.createRadialGradient(-cr * 0.2, -cr * 0.2, cr * 0.05, cr * 0.1, cr * 0.1, cr);
       pg.addColorStop(0, clrs.light);
-      pg.addColorStop(0.7, color);
+      pg.addColorStop(0.65, color);
       pg.addColorStop(1, clrs.dark);
       ctx.beginPath();
       ctx.arc(0, 0, cr, 0, Math.PI * 2);
       ctx.fillStyle = pg;
       ctx.fill();
 
-      // 示武将名(仅正面)
-      if (showTop && scaleX > 0.3 && anim.character) {
+      // 贴图
+      const flipFaction = _getFaction(showNew ? anim.toType : anim.fromType, _currentFactions);
+      const flipImg = getFactionImage(flipFaction);
+      if (flipImg.complete && flipImg.width > 0) {
+        ctx.drawImage(flipImg, -cr * 1.5, -cr * 1.5, cr * 3, cr * 3);
+      }
+      ctx.restore();
+
+      // 武将名 (翻转到新面后显示)
+      if (showNew && scaleY > 0.3 && anim.character) {
         const fs = Math.max(9, Math.floor(cr * 0.8));
         ctx.font = `bold ${fs}px sans-serif`;
         ctx.textAlign = 'center';
@@ -220,37 +268,10 @@ export function drawAnimations(renderer, animations) {
         ctx.fillText(anim.character.charAt(0), 0, 0.5);
       }
 
-      // 边缘线 - 侧面过渡色
-      if (scaleX > 0.15) {
-        ctx.strokeStyle = edgeAlpha > 0.3
-          ? `rgba(90, 58, 26, ${edgeAlpha})`
-          : 'rgba(255,255,255,0.1)';
-        ctx.lineWidth = edgeAlpha > 0.3 ? 2 : 0.8;
-        ctx.stroke();
-      }
+      ctx.restore(); // scale(1, scaleY)
+      ctx.restore(); // translate
 
-      ctx.restore();
-
-      // 翻转粒子光尘
-      if (anim.particles && progress > 0.1 && progress < 0.9) {
-        drawParticles(ctx, anim.particles, elapsed, isToP1 ? 1 : 2, -12);
-      }
-
-      // 落地瞬间晕影光环
-      if (progress > 0.8) {
-        const hp = (progress - 0.8) / 0.2;
-        const haloAlpha = Math.min(1, hp) * 0.5;
-        const haloR = cr * (1 + hp * 0.6);
-        const prgb = playerRGB(isToP1 ? 1 : 2);
-        ctx.beginPath();
-        ctx.arc(anim.x, anim.y, haloR, 0, Math.PI * 2);
-        const haloGrad = ctx.createRadialGradient(anim.x, anim.y, cr * 0.7, anim.x, anim.y, haloR);
-        haloGrad.addColorStop(0, 'transparent');
-        haloGrad.addColorStop(0.5, `rgba(${prgb}, ${haloAlpha})`);
-        haloGrad.addColorStop(1, 'transparent');
-        ctx.fillStyle = haloGrad;
-        ctx.fill();
-      }
+      if (tilt) ctx.restore(); // 恢复透视倾斜
     } else if (anim.type === ANIM_TYPE.LIGHTNING) {
       const elapsed = now - anim.startTime;
       if (elapsed < 0) continue;
