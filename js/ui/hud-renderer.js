@@ -157,8 +157,10 @@ export function drawHPBar(renderer, player, playerNum, faction) {
 export function drawGameOver(renderer, state) {
   const ctx = renderer.ctx;
   const cx = renderer.width / 2, cy = renderer.height / 2;
-  const boxW = Math.min(260, renderer.width - 40), boxH = 170;
+  const boxW = Math.min(260, renderer.width - 40), boxH = 150;
   const bx = cx - boxW / 2, by = cy - boxH / 2;
+  const isChapterMode = state._isChapterMode;
+  const player1Won = !state.player1.isDead();
 
   ctx.fillStyle = COLORS.overlay;
   ctx.fillRect(0, 0, renderer.width, renderer.height);
@@ -175,29 +177,45 @@ export function drawGameOver(renderer, state) {
   ctx.lineWidth = 0.5;
   ctx.strokeRect(bx + 8, by + 10, boxW - 16, 35);
 
-  const winner = state.player1.isDead() ? '玩家2' : '玩家1';
-  const winColor = state.player1.isDead() ? COLORS.player2 : COLORS.player1;
-  ctx.fillStyle = winColor;
-  ctx.font = 'bold 24px sans-serif';
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.fillText(winner, cx, by + 28);
-  ctx.fillStyle = COLORS.textGold;
-  ctx.font = 'bold 14px sans-serif';
-  ctx.fillText('一统天下', cx, by + 52);
-  ctx.fillStyle = COLORS.textSecondary;
-  ctx.font = '12px sans-serif';
-  ctx.fillText(`玩家1 剩余 ${state.player1._hp}HP   |   玩家2 剩余 ${state.player2._hp}HP`, cx, by + 80);
+  if (isChapterMode) {
+    const faction = state.currentPlayerFaction || '蜀';
+    ctx.fillStyle = player1Won ? COLORS.textGold : COLORS.textSecondary;
+    ctx.font = 'bold 22px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(player1Won ? '胜利' : '战败', cx, by + 28);
+    ctx.fillStyle = COLORS.textSecondary;
+    ctx.font = '12px sans-serif';
+    ctx.fillText(`${faction}军 剩余兵力 ${state.player1._hp}`, cx, by + 58);
+  } else {
+    const winner = player1Won ? '玩家1' : '玩家2';
+    const winColor = player1Won ? COLORS.player1 : COLORS.player2;
+    ctx.fillStyle = winColor;
+    ctx.font = 'bold 22px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(winner + ' 胜', cx, by + 28);
+    ctx.fillStyle = COLORS.textSecondary;
+    ctx.font = '12px sans-serif';
+    ctx.fillText(`玩家1 ${state.player1._hp}HP  |  玩家2 ${state.player2._hp}HP`, cx, by + 58);
+  }
 
   const rbw = 140, rbh = 40, rbx = cx - rbw / 2, rby = by + boxH - 55;
-  ctx.fillStyle = COLORS.buttonBg;
+  ctx.fillStyle = isChapterMode && player1Won ? COLORS.factionShu : COLORS.buttonBg;
   renderer.roundRect(rbx, rby, rbw, rbh, rbh / 2, true, false);
   ctx.strokeStyle = COLORS.tokenGold;
   ctx.lineWidth = 1;
   renderer.roundRect(rbx, rby, rbw, rbh, rbh / 2, false, true);
-  ctx.fillStyle = COLORS.textGold;
+  ctx.fillStyle = '#fff';
   ctx.font = 'bold 15px sans-serif';
-  ctx.fillText('重整旗鼓', cx, rby + rbh / 2);
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+
+  if (isChapterMode) {
+    ctx.fillText(player1Won ? '进入下一章 ▸' : '重整旗鼓', cx, rby + rbh / 2);
+  } else {
+    ctx.fillText('重整旗鼓', cx, rby + rbh / 2);
+  }
 
   renderer._restartButton = { x: rbx, y: rby, w: rbw, h: rbh };
 }

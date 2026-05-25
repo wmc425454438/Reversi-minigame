@@ -6,6 +6,9 @@ import { drawMenu } from './menu-renderer.js';
 import { drawTutorial } from './tutorial-renderer.js';
 import { drawLoading, drawEnemyBanner, drawTurnIndicator, drawHPBar, drawGameOver } from './hud-renderer.js';
 import { drawModeSelect, drawChapterList, drawStoryDetail, drawBranchSelect, drawChapterRuleTip } from './story-renderer.js';
+import { drawDialogue } from './dialogue-renderer.js';
+import { drawEndGame } from './endgame-renderer.js';
+import { drawDeckManager } from './deck-renderer.js';
 
 function rgba(hex, alpha) {
   const n = parseInt(hex.replace('#', ''), 16);
@@ -270,6 +273,67 @@ export class Renderer {
   }
 
   getStoryButtonAt(x, y) { return this._hitRect(x, y, this._storyButton); }
+  getMenuBackAt(x, y) { return this._hitRect(x, y, this._menuBackButton); }
+  getDeckManageAt(x, y) { return this._hitRect(x, y, this._deckManageButton); }
+
+  // ==================== Dialogue Scene ====================
+
+  drawDialogueScene(dialogues, textIndex, revealedChars) {
+    this.clear();
+    drawDialogue(this, dialogues, textIndex, revealedChars);
+  }
+
+  getDialogueNextAt(x, y) { return this._hitRect(x, y, this._dialogueNextButton); }
+  getDialogueSkipAt(x, y) { return this._hitRect(x, y, this._dialogueSkipButton); }
+
+  // ==================== End Game Animation ====================
+
+  drawEndGameScene(mode, elapsed, duration) {
+    drawEndGame(this, mode, elapsed, duration);
+  }
+
+  getEndGameSkipAt(x, y) { return this._hitRect(x, y, this._endGameSkipButton); }
+
+  // ==================== Deck Management Scene ====================
+
+  drawDeckManagerScene(manager, selectedDeckId, selectedCardId, activeFilter, scrollY) {
+    this.clear();
+    drawDeckManager(this, manager, selectedDeckId, selectedCardId, activeFilter, scrollY);
+  }
+
+  getDeckBackAt(x, y) { return this._hitRect(x, y, this._deckBackButton); }
+  getDeckTabAt(x, y) {
+    var tabs = this._deckTabs || [];
+    for (var i = 0; i < tabs.length; i++) {
+      if (this._hitRectRaw(x, y, tabs[i])) return tabs[i];
+    }
+    return null;
+  }
+  getDeckAddTabAt(x, y) { return this._hitRect(x, y, this._deckAddTabButton); }
+  getDeckDeleteAt(x, y) {
+    var btns = this._deckDeleteButtons || [];
+    for (var i = 0; i < btns.length; i++) {
+      if (this._hitRectRaw(x, y, btns[i])) return btns[i];
+    }
+    return null;
+  }
+  getDeckCardAt(x, y) {
+    var cards = this._deckCards || [];
+    for (var i = 0; i < cards.length; i++) {
+      if (this._hitRectRaw(x, y, cards[i])) return cards[i];
+    }
+    return null;
+  }
+  getDeckFilterAt(x, y) {
+    var tabs = this._deckFilterTabs || [];
+    for (var i = 0; i < tabs.length; i++) {
+      if (this._hitRectRaw(x, y, tabs[i])) return tabs[i];
+    }
+    return null;
+  }
+  getDeckSaveAt(x, y) { return this._hitRect(x, y, this._deckSaveButton); }
+  getDeckResetAt(x, y) { return this._hitRect(x, y, this._deckResetButton); }
+  getDeckDeployAt(x, y) { return this._hitRect(x, y, this._deckDeployButton); }
 
   getStoryModeBtnAt(x, y) { return this._hitRect(x, y, this._storyModeBtn); }
   getBattleModeBtnAt(x, y) { return this._hitRect(x, y, this._battleModeBtn); }

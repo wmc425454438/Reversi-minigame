@@ -149,13 +149,15 @@ export function drawChapterList(renderer, chapters) {
     renderer._chapterButtons.push({ x: bx, y: by, w: btnW, h: btnH, chapterId: ch.id, unlocked: ch.unlocked });
   }
 
-  // 返回按钮
-  const backY = startY + chapters.length * (btnH + gap) + 10;
+  // 左上角返回按钮
+  ctx.fillStyle = 'rgba(0,0,0,0.3)';
+  renderer.roundRect(10, 8, 56, 24, 12, true, false);
   ctx.fillStyle = COLORS.textSecondary;
-  ctx.font = '12px sans-serif';
+  ctx.font = '11px sans-serif';
   ctx.textAlign = 'center';
-  ctx.fillText('← 返回主菜单', cx, backY + 14);
-  renderer._chapterBackButton = { x: cx - 60, y: backY, w: 120, h: 30 };
+  ctx.textBaseline = 'middle';
+  ctx.fillText('← 返回', 38, 20);
+  renderer._chapterBackButton = { x: 10, y: 8, w: 56, h: 24 };
 }
 
 export function drawStoryDetail(renderer, chapter, textIndex) {

@@ -4,6 +4,7 @@ import { createInitialBoard, calculateMoveableArea, reversiChess, hasAnyMoveable
 import { Renderer } from './ui/renderer.js';
 import { AIPlayer, AI_DIFFICULTY } from './ai/ai-player.js';
 import { getChapterList, getChapter, completeChapter } from './models/chapters.js';
+import { DeckManager } from './models/deck-manager.js';
 
 const DESIGN_WIDTH = 375;
 const DESIGN_HEIGHT = 667;
@@ -61,6 +62,32 @@ export default class Main {
     this.chapterRules = null;
     this.storyTextIndex = 0;
 
+    // 对话系统状态
+    this.dialogueIndex = 0;
+    this.dialogueRevealed = 0;
+    this.typewriterTimer = null;
+
+    // 胜利/失败动画状态
+    this.endGameMode = null;
+    this.endGameStartTime = null;
+    this.endGameDuration = 0;
+
+    // 卡组管理系统
+    try {
+      this.deckManager = new DeckManager();
+    } catch (e) {
+      this.deckManager = null;
+    }
+    this.deckManageSelectedId = null;
+    this.deckActiveFilter = null;
+    this.deckSelectedCardId = null;
+    this.deckScrollY = 0;
+    this.deckTouchStartY = 0;
+    if (this.deckManager) {
+      var sd = this.deckManager.getSelectedDeck();
+      this.deckManageSelectedId = sd ? sd.id : null;
+    }
+
     // 性能监控
     this.setupPerformanceMonitoring();
 
@@ -111,7 +138,57 @@ export default class Main {
     this.scene = 'modeSelect';
   }
 
+  startTypewriter(text) {
+    this.stopTypewriter();
+    this.dialogueRevealed = 0;
+    if (!text) return;
+    var self = this;
+    this.typewriterTimer = setInterval(function () {
+      if (self.dialogueRevealed < text.length) {
+        self.dialogueRevealed++;
+      } else {
+        self.stopTypewriter();
+      }
+    }, 40);
+  }
+
+  stopTypewriter() {
+    if (this.typewriterTimer) {
+      clearInterval(this.typewriterTimer);
+      this.typewriterTimer = null;
+    }
+  }
+
+  startDialogue(chapterId) {
+    var chapter = getChapter(chapterId);
+    if (!chapter) return;
+    this.currentChapterId = chapterId;
+    this.dialogueIndex = 0;
+    var dialogues = chapter.dialogues;
+    if (!dialogues || dialogues.length === 0) {
+      this.storyTextIndex = 0;
+      this.scene = 'storyDetail';
+      return;
+    }
+    this.scene = 'dialogue';
+    this.startTypewriter(dialogues[0].text);
+  }
+
+  startEndGameAnimation(player1Won) {
+    this.endGameMode = player1Won ? 'victory' : 'defeat';
+    this.endGameStartTime = Date.now();
+    this.endGameDuration = player1Won ? 2500 : 2000;
+  }
+
+  showResult() {
+    this.endGameMode = null;
+    this.endGameStartTime = null;
+    this.gameState.gameOver = true;
+  }
+
   initGameState() {
+    this.endGameMode = null;
+    this.endGameStartTime = null;
     this.gameState = {
       tableArr: [],
       lastMove: 1,
@@ -130,7 +207,7 @@ export default class Main {
     };
   }
 
-  startGame(faction, difficulty) {
+  startGame(faction, difficulty, deckId) {
     this.initGameState();
 
     // AI从剩余势力中随机选一个
@@ -141,6 +218,16 @@ export default class Main {
     const board = createInitialBoard();
     const p1Deck = new PlayerDeck(faction);
     const p2Deck = new PlayerDeck(p2Faction);
+
+    // 使用自定义卡组
+    if (deckId && this.deckManager) {
+      var customDeck = this.deckManager.getDeck(deckId);
+      if (customDeck && customDeck.cards.length > 0) {
+        p1Deck.cards = customDeck.cards.map(function(c) { return { id: c.id, character: c.character, faction: c.faction }; });
+        p1Deck.shuffle();
+      }
+    }
+
     const p1Hand = new PlayerHand(5);
     const p2Hand = new PlayerHand(5);
 
@@ -186,10 +273,12 @@ export default class Main {
     this.initGameState();
 
     const faction = chapter.faction || '蜀';
+    const allFactions = ['魏', '蜀', '吴'];
+    const p2Faction = allFactions.filter(f => f !== faction)[Math.floor(Math.random() * 2)];
     const board = createInitialBoard();
     const handLimit = this.chapterRules.handLimit || 5;
     const p1Deck = new PlayerDeck(faction);
-    const p2Deck = new PlayerDeck(faction);
+    const p2Deck = new PlayerDeck(p2Faction);
     const p1Hand = new PlayerHand(handLimit);
     const p2Hand = new PlayerHand(handLimit);
 
@@ -204,6 +293,7 @@ export default class Main {
       ...this.gameState,
       tableArr: calculateMoveableArea(board, 1),
       currentPlayerFaction: faction,
+      player2Faction: p2Faction,
       player1Deck: p1Deck,
       player2Deck: p2Deck,
       player1Hand: p1Hand,
@@ -264,7 +354,7 @@ export default class Main {
 
   moveChess(row, col) {
     const gs = this.gameState;
-    if (gs.gameOver) return;
+    if (gs.gameOver || gs._ending) return;
     if (gs.tableArr[row][col].type !== 3) return;
     if (!gs.selectedCard) return;
 
@@ -422,7 +512,10 @@ export default class Main {
     }
 
     if (opponent.isDead()) {
-      gs.gameOver = true;
+      var self = this;
+      var winnerIsP1 = !gs.player1.isDead();
+      setTimeout(function () { self.startEndGameAnimation(winnerIsP1); }, 800);
+      gs._ending = true;
     }
 
     const hand = currentPlayerType === 1 ? gs.player1Hand : gs.player2Hand;
@@ -435,7 +528,10 @@ export default class Main {
     if (!hasAnyMoveable(boardWithMoves, nextPlayer)) {
       const boardForCurrent = calculateMoveableArea(newBoard, currentPlayerType);
       if (!hasAnyMoveable(boardForCurrent, currentPlayerType)) {
-        gs.gameOver = true;
+        var self2 = this;
+        var winnerIsP1 = !gs.player1.isDead();
+        setTimeout(function () { self2.startEndGameAnimation(winnerIsP1); }, 800);
+        gs._ending = true;
       } else {
         gs.tableArr = boardForCurrent;
         gs.lastMove = currentPlayerType;
@@ -501,6 +597,10 @@ export default class Main {
       this.handleStoryDetailTouch(x, y);
     } else if (this.scene === 'branchSelect') {
       this.handleBranchTouch(x, y);
+    } else if (this.scene === 'dialogue') {
+      this.handleDialogueTouch(x, y);
+    } else if (this.scene === 'deckManage') {
+      this.handleDeckTouch(x, y);
     }
   }
 
@@ -526,6 +626,16 @@ export default class Main {
       } else {
         this.previewChains = null;
       }
+    } else if (this.scene === 'deckManage') {
+      const touch = e.touches[0];
+      const { x, y } = this.toDesignCoords(touch);
+      var dy = y - this.deckTouchStartY;
+      if (Math.abs(dy) > 3) {
+        this._deckTouchMoved = true;
+        var maxScroll = this.renderer._deckMaxScroll || 0;
+        this.deckScrollY = Math.max(0, Math.min(this.deckScrollY - dy, maxScroll));
+        this.deckTouchStartY = y;
+      }
     }
   }
 
@@ -538,9 +648,23 @@ export default class Main {
   }
 
   handleMenuTouch(x, y) {
-    // 剧情模式按钮
-    if (this.renderer.getStoryButtonAt(x, y)) {
-      this.scene = 'chapterList';
+    // 返回按钮
+    if (this.renderer.getMenuBackAt(x, y)) {
+      this.scene = 'modeSelect';
+      this.selectedFaction = null;
+      return;
+    }
+
+    // 卡组管理按钮
+    if (this.renderer.getDeckManageAt(x, y)) {
+      if (this.deckManager) {
+        var sd = this.deckManager.getSelectedDeck();
+        this.deckManageSelectedId = sd ? sd.id : null;
+        this.deckActiveFilter = sd ? sd.faction : '蜀';
+      }
+      this.deckSelectedCardId = null;
+      this.deckScrollY = 0;
+      this.scene = 'deckManage';
       return;
     }
 
@@ -555,9 +679,11 @@ export default class Main {
       const diff = this.renderer.getDifficultyAt(x, y);
       if (diff) {
         if (diff === 'pvp') {
-          this.startGame(this.selectedFaction, null);
+          if (this.deckManager) { var d = this.deckManager.getSelectedDeck(); this.startGame(this.selectedFaction, null, d ? d.id : null); }
+          else { this.startGame(this.selectedFaction, null); }
         } else {
-          this.startGame(this.selectedFaction, diff);
+          if (this.deckManager) { var d2 = this.deckManager.getSelectedDeck(); this.startGame(this.selectedFaction, diff, d2 ? d2.id : null); }
+          else { this.startGame(this.selectedFaction, diff); }
         }
       }
     }
@@ -566,6 +692,12 @@ export default class Main {
   handleGameTouchStart(x, y) {
     const gs = this.gameState;
     if (this.isAIThinking) return;
+
+    // 胜利/失败动画中，点击跳过
+    if (this.endGameMode) {
+      this.showResult();
+      return;
+    }
 
     if (gs.gameOver) {
       if (this.renderer.getRestartButtonAt(x, y)) {
@@ -638,14 +770,12 @@ export default class Main {
 
   handleChapterListTouch(x, y) {
     if (this.renderer.getChapterBackAt(x, y)) {
-      this.scene = 'menu';
+      this.scene = 'modeSelect';
       return;
     }
     const btn = this.renderer.getChapterButtonAt(x, y);
     if (btn && btn.unlocked) {
-      this.currentChapterId = btn.chapterId;
-      this.storyTextIndex = 0;
-      this.scene = 'storyDetail';
+      this.startDialogue(btn.chapterId);
     }
   }
 
@@ -668,6 +798,136 @@ export default class Main {
     if (btn) {
       completeChapter(this.currentChapterId, btn.nextChapter);
       this.scene = 'chapterList';
+    }
+  }
+
+  handleDialogueTouch(x, y) {
+    var chapter = getChapter(this.currentChapterId);
+    if (!chapter || !chapter.dialogues) return;
+    var dialogues = chapter.dialogues;
+    var current = dialogues[this.dialogueIndex];
+    if (!current) return;
+
+    if (this.renderer.getDialogueSkipAt(x, y)) {
+      this.stopTypewriter();
+      var last = dialogues[dialogues.length - 1];
+      this.dialogueIndex = dialogues.length - 1;
+      this.dialogueRevealed = last.text.length;
+      return;
+    }
+
+    var textComplete = this.dialogueRevealed >= current.text.length;
+    var isLast = this.dialogueIndex >= dialogues.length - 1;
+
+    if (!textComplete) {
+      this.stopTypewriter();
+      this.dialogueRevealed = current.text.length;
+    } else if (!isLast) {
+      this.dialogueIndex++;
+      this.startTypewriter(dialogues[this.dialogueIndex].text);
+    } else {
+      if (this.renderer.getDialogueNextAt(x, y)) {
+        this.stopTypewriter();
+        this.startChapterGame(this.currentChapterId);
+      }
+    }
+  }
+
+  handleDeckTouch(x, y) {
+    var dm = this.deckManager;
+    if (!dm) return;
+
+    // 记录触摸起点（用于滚动检测）
+    this.deckTouchStartY = y;
+    this._deckTouchMoved = false;
+
+    // 返回
+    if (this.renderer.getDeckBackAt(x, y)) {
+      this.scene = 'menu';
+      return;
+    }
+
+    // 筛选标签
+    var ftab = this.renderer.getDeckFilterAt(x, y);
+    if (ftab) {
+      this.deckActiveFilter = ftab.faction;
+      this.deckSelectedCardId = null;
+      this.deckScrollY = 0;
+      return;
+    }
+
+    // 删除卡组
+    var delBtn = this.renderer.getDeckDeleteAt(x, y);
+    if (delBtn && dm.getAllDecks().length > 1) {
+      dm.deleteDeck(delBtn.deckId);
+      if (this.deckManageSelectedId === delBtn.deckId) {
+        var remaining = dm.getAllDecks();
+        this.deckManageSelectedId = remaining.length > 0 ? remaining[0].id : null;
+      }
+      return;
+    }
+
+    var tab = this.renderer.getDeckTabAt(x, y);
+    if (tab) {
+      this.deckManageSelectedId = tab.deckId;
+      this.deckSelectedCardId = null;
+      this.deckScrollY = 0;
+      var newDeck2 = dm.getDeck(tab.deckId);
+      if (newDeck2) this.deckActiveFilter = newDeck2.faction;
+      return;
+    }
+
+    if (this.renderer.getDeckAddTabAt(x, y)) {
+      var decks = dm.getAllDecks();
+      if (decks.length < 10) {
+        var factions = ['魏', '蜀', '吴'];
+        var f = factions[decks.length % 3];
+        var names = {
+          '魏': ['虎豹骑', '青州兵', '虎贲军', '武卫营'],
+          '蜀': ['白耳兵', '无当军', '连弩营', '陷阵营'],
+          '吴': ['解烦军', '敢死营', '锦帆营', '车下虎士'],
+        };
+        var nameList = names[f] || ['新卡组'];
+        var name = nameList[Math.floor(Math.random() * nameList.length)];
+        var newDeck = dm.createDeck(name, f);
+        this.deckManageSelectedId = newDeck.id;
+      }
+      return;
+    }
+
+    // 拖拽滚动时不触发点击
+    if (this._deckTouchMoved) return;
+
+    // 底部操作栏（优先于卡牌点击）
+    if (this.renderer.getDeckSaveAt(x, y)) {
+      dm._save();
+      if (wx.showToast) wx.showToast({ title: '已保存', icon: 'success', duration: 1000 });
+      return;
+    }
+    if (this.renderer.getDeckResetAt(x, y)) {
+      dm.resetDeck(this.deckManageSelectedId);
+      this.deckSelectedCardId = null;
+      return;
+    }
+    if (this.renderer.getDeckDeployAt(x, y)) {
+      dm.setSelectedDeck(this.deckManageSelectedId);
+      dm._save();
+      this.scene = 'menu';
+      return;
+    }
+
+    // 点击卡牌：卡组中的→移除，卡池中未编入的→添加
+    var card = this.renderer.getDeckCardAt(x, y);
+    if (card) {
+      if (card.isInDeck) {
+        dm.removeCard(this.deckManageSelectedId, card.cardId);
+        this.deckSelectedCardId = null;
+      } else if (!dm.isCharInDeck(this.deckManageSelectedId, card.cardId)) {
+        if (dm.addCard(this.deckManageSelectedId, card.cardId)) {
+          this.deckSelectedCardId = card.cardId;
+        }
+      }
+      return;
     }
   }
 
@@ -697,13 +957,25 @@ export default class Main {
     } else if (this.scene === 'menu') {
       this.renderer.drawMenu(this.selectedFaction, this.aiDifficulty);
     } else if (this.scene === 'game' || this.scene === 'storyGame') {
-      // AI回合检测
-      this.processAITurn();
+      // AI回合检测（非结算动画期间）
+      if (!this.endGameMode && !this.gameState._ending) {
+        this.processAITurn();
+      }
       this.gameState.previewChains = this.previewChains;
       this.gameState.isAIThinking = this.isAIThinking;
+      this.gameState._isChapterMode = this.isChapterMode;
       this.renderer.drawGame(this.gameState);
       if (this.isChapterMode && this.chapterRules) {
         this.renderer.drawChapterRuleTip(this.chapterRules);
+      }
+      // 胜利/失败动画叠加
+      if (this.endGameMode) {
+        var elapsed = Date.now() - this.endGameStartTime;
+        if (elapsed >= this.endGameDuration) {
+          this.renderer.drawEndGameScene(this.endGameMode, this.endGameDuration, this.endGameDuration);
+        } else {
+          this.renderer.drawEndGameScene(this.endGameMode, elapsed, this.endGameDuration);
+        }
       }
     } else if (this.scene === 'chapterList') {
       this.renderer.drawChapterList(getChapterList());
@@ -715,12 +987,19 @@ export default class Main {
       this.renderer.clear();
       this.renderer.drawBackground();
       this.renderer.drawBranchSelect(chapter);
+    } else if (this.scene === 'dialogue') {
+      const chapter = getChapter(this.currentChapterId);
+      if (chapter && chapter.dialogues) {
+        this.renderer.drawDialogueScene(chapter.dialogues, this.dialogueIndex, this.dialogueRevealed);
+      }
+    } else if (this.scene === 'deckManage') {
+      this.renderer.drawDeckManagerScene(this.deckManager, this.deckManageSelectedId, this.deckSelectedCardId, this.deckActiveFilter, this.deckScrollY);
     }
   }
 
   processAITurn() {
     const gs = this.gameState;
-    if (!gs || gs.gameOver) return;
+    if (!gs || gs.gameOver || gs._ending) return;
     if (!this.aiPlayer) return;
 
     // AI是玩家2，当lastMove=2时轮到AI
@@ -758,7 +1037,10 @@ export default class Main {
           // 真无合法落子，跳过回合
           const boardForP1 = calculateMoveableArea(board.map(r => r.map(c => ({...c}))), 1);
           if (!hasAnyMoveable(boardForP1, 1)) {
-            gs.gameOver = true;
+            var self3 = this;
+            var winnerIsP1 = !gs.player1.isDead();
+            setTimeout(function () { self3.startEndGameAnimation(winnerIsP1); }, 800);
+            gs._ending = true;
           }
           gs.lastMove = 1;
           gs.selectedCard = null;
